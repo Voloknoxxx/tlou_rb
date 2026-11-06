@@ -61,39 +61,112 @@ function Color3.new(r, g, b) return { R = r, G = g, B = b } end
 -- Minimal affine CFrame: position plus a 3x3 rotation.
 CFrame = {}
 CFrame.__index = CFrame
-function CFrame.new(a, b, c)
-	local cf = setmetatable({}, CFrame)
-	if type(a) == "table" and a.X then
-		cf.Position = Vector3.new(a.X, a.Y, a.Z)
-	elseif type(a) == "table" and a.Position then
-		cf.Position = a.Position
-		cf.R = a.R
-	else
-		cf.Position = Vector3.new(a or 0, b or 0, c or 0)
-	end
-	cf.R = cf.R or { 1, 0, 0, 0, 1, 0, 0, 0, 1 }
-	cf.LookVector = Vector3.new(-cf.R[3], -cf.R[6], -cf.R[9])
-	cf.RightVector = Vector3.new(cf.R[1], cf.R[4], cf.R[7])
-	cf.UpVector = Vector3.new(cf.R[2], cf.R[5], cf.R[8])
-	return cf
+
+-- Real 3x3 matrix maths, because the animation code composes rotations and
+-- we want the tests to exercise the actual composition, not a stub that
+-- always returns identity.
+local function matMul(a, b)
+return {
+a[1]*b[1] + a[2]*b[4] + a[3]*b[7], a[1]*b[2] + a[2]*b[5] + a[3]*b[8], a[1]*b[3] + a[2]*b[6] + a[3]*b[9],
+a[4]*b[1] + a[5]*b[4] + a[6]*b[7], a[4]*b[2] + a[5]*b[5] + a[6]*b[8], a[4]*b[3] + a[5]*b[6] + a[6]*b[9],
+a[7]*b[1] + a[8]*b[4] + a[9]*b[7], a[7]*b[2] + a[8]*b[5] + a[9]*b[8], a[7]*b[3] + a[8]*b[6] + a[9]*b[9],
+}
 end
+
+local function matVec(m, v)
+return Vector3.new(
+m[1]*v.X + m[2]*v.Y + m[3]*v.Z,
+m[4]*v.X + m[5]*v.Y + m[6]*v.Z,
+m[7]*v.X + m[8]*v.Y + m[9]*v.Z
+)
+end
+
+local function matTranspose(m)
+return { m[1], m[4], m[7], m[2], m[5], m[8], m[3], m[6], m[9] }
+end
+
+local IDENTITY = { 1, 0, 0, 0, 1, 0, 0, 0, 1 }
+
+function CFrame.new(a, b, c, r0, r1, r2, r3, r4, r5, r6, r7, r8)
+local cf = setmetatable({}, CFrame)
+if type(a) == "table" and a.X then
+cf.Position = Vector3.new(a.X, a.Y, a.Z)
+cf.R = IDENTITY
+elseif type(a) == "table" and a.Position then
+cf.Position = a.Position
+cf.R = a.R or IDENTITY
+else
+cf.Position = Vector3.new(a or 0, b or 0, c or 0)
+cf.R = IDENTITY
+end
+if r0 ~= nil then
+cf.R = { r0, r1, r2, r3, r4, r5, r6, r7, r8 }
+end
+cf:refresh()
+return cf
+end
+
+function CFrame:refresh()
+local R = self.R
+self.RightVector = Vector3.new(R[1], R[4], R[7])
+self.UpVector = Vector3.new(R[2], R[5], R[8])
+self.LookVector = Vector3.new(-R[3], -R[6], -R[9])
+-- Build Rotation directly rather than through CFrame.new: that would
+-- call refresh again and recurse forever.
+local rot = setmetatable({}, CFrame)
+rot.Position = Vector3.new(0, 0, 0)
+rot.R = { R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8], R[9] }
+rot.RightVector = Vector3.new(R[1], R[4], R[7])
+rot.UpVector = Vector3.new(R[2], R[5], R[8])
+rot.LookVector = Vector3.new(-R[3], -R[6], -R[9])
+self.Rotation = rot
+return self
+end
+
+-- Euler angles in YXZ order (yaw, pitch, roll), matching Roblox's
+-- CFrame.fromEulerAnglesYXZ which the animation code uses.
+function CFrame.fromEulerAnglesYXZ(y, p, r)
+local cy, sy = math.cos(y), math.sin(y)
+local cp, sp = math.cos(p), math.sin(p)
+local cr, sr = math.cos(r), math.sin(r)
+local m = matMul({ cy, 0, sy, 0, 1, 0, -sy, 0, cy }, { 1, 0, 0, 0, cp, -sp, 0, sp, cp })
+m = matMul(m, { cr, -sr, 0, sr, cr, 0, 0, 0, 1 })
+return CFrame.new(0, 0, 0, m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9])
+end
+
+function CFrame.fromAxisAngle(axis, angle)
+local v = axis.Unit
+local c, s = math.cos(angle), math.sin(angle)
+local t = 1 - c
+local m = {
+t*v.X*v.X + c, t*v.X*v.Y - s*v.Z, t*v.X*v.Z + s*v.Y,
+t*v.X*v.Y + s*v.Z, t*v.Y*v.Y + c, t*v.Y*v.Z - s*v.X,
+t*v.X*v.Z - s*v.Y, t*v.Y*v.Z + s*v.X, t*v.Z*v.Z + c,
+}
+return CFrame.new(0, 0, 0, m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9])
+end
+
 function CFrame.Angles(x, y, z)
-	local cf = CFrame.new(0, 0, 0)
-	cf.Angles = { x or 0, y or 0, z or 0 }
-	return cf
+return CFrame.fromEulerAnglesYXZ(y, x, z)
 end
+
 function CFrame.__mul(a, b)
-	if type(b) == "number" then
-		return CFrame.new(a.Position.X * b, a.Position.Y * b, a.Position.Z * b)
-	end
-	local out = CFrame.new(
-		a.Position.X + b.Position.X,
-		a.Position.Y + b.Position.Y,
-		a.Position.Z + b.Position.Z
-	)
-	return out
+if type(b) == "number" then
+return CFrame.new(a.Position.X * b, a.Position.Y * b, a.Position.Z * b)
 end
-function CFrame:ToEulerAnglesYXZ() return 0, 0, 0 end
+local pos = a.Position + matVec(a.R, b.Position)
+local rot = matMul(a.R, b.R)
+local out = CFrame.new(pos.X, pos.Y, pos.Z, rot[1], rot[2], rot[3], rot[4], rot[5], rot[6], rot[7], rot[8], rot[9])
+return out
+end
+
+function CFrame:ToEulerAnglesYXZ()
+local R = self.R
+local pitch = math.asin(-math.clamp(R[6], -1, 1))
+local yaw = math.atan2(R[3], R[9])
+local roll = math.atan2(R[4], R[5])
+return yaw, pitch, roll
+end
 
 -- Instance stub with parent/child bookkeeping and property storage.
 local function makeInstance(class)
@@ -104,9 +177,15 @@ local function makeInstance(class)
 		_children = {},
 		_attributes = {},
 	}
-	function inst:FindFirstChild(name)
+	function inst:FindFirstChild(name, recursive)
 		for _, child in ipairs(self._children) do
 			if child.Name == name then return child end
+		end
+		if recursive then
+			for _, child in ipairs(self._children) do
+				local found = child:FindFirstChild(name, true)
+				if found then return found end
+			end
 		end
 		return nil
 	end
@@ -127,9 +206,21 @@ local function makeInstance(class)
 		end
 		return out
 	end
+	-- Motor6D carries an extra Transform that defaults to identity; our
+	-- animator writes it every frame.
+	if class == "Motor6D" then
+		inst.Transform = CFrame.new()
+	end
 	function inst:SetAttribute(key, value) self._attributes[key] = value end
 	function inst:GetAttribute(key) return self._attributes[key] end
-	function inst:IsA(class2) return self.ClassName == class2 end
+	function inst:IsA(class2)
+		if self.ClassName == class2 then return true end
+		-- Roblox parts share the abstract "BasePart" superclass.
+		local PARTS = { Part = true, MeshPart = true, UnionOperation = true, TrussPart = true, WedgePart = true, CornerWedgePart = true, Sphere = true, Cylinder = true }
+		if class2 == "BasePart" and PARTS[self.ClassName] then return true end
+		if class2 == "Instance" then return true end
+		return false
+	end
 	function inst:Destroy()
 		self.Parent = nil
 	end
@@ -459,6 +550,244 @@ check("Molotov has Rag", hasChildNamed(bottle, "Rag"))
 check("buildById unknown returns nil", WeaponModels.buildById("Nope") == nil)
 
 -- ---------------------------------------------------------------------
+section("AnimationSystem (pose maths)")
+-- ---------------------------------------------------------------------
+local AS = AnimationSystem
+
+-- A fresh accumulator must start clean.
+local st = AS.newState()
+check("newState has phase", type(st.phase) == "number")
+check("newState phase starts at 0", st.phase == 0)
+check("newState has turnPhase", type(st.turnPhase) == "number")
+check("newState has breath", type(st.breath) == "number")
+
+-- Weights table must cover every channel the pose reader looks for.
+for _, key in ipairs({ "crouch", "prone", "aim", "sprint", "air", "vault", "downed", "armed" }) do
+check("EMPTY_WEIGHTS has " .. key, AS.EMPTY_WEIGHTS[key] ~= nil)
+end
+
+-- The stride advances with distance travelled, so faster movement means a
+-- faster cycle. This is what keeps the feet from skating.
+local walkAdvance = AS.strideAdvance(Config.Movement.WalkSpeed, false, 0.1)
+local runAdvance = AS.strideAdvance(Config.Movement.SprintSpeed, false, 0.1)
+check("stride advances with speed", runAdvance > walkAdvance, runAdvance .. " vs " .. walkAdvance)
+check("stride is positive for movement", walkAdvance > 0)
+check("sprint boost quickens the cycle", AS.strideAdvance(10, true, 0.1) > AS.strideAdvance(10, false, 0.1))
+check("no movement means no stride", AS.strideAdvance(0, false, 0.1) == 0)
+
+-- Turning the body: the returned rate feeds turn-in-place stepping.
+local yaw0 = 0
+local yaw1, rate = AS.bodyTurn(yaw0, math.rad(90), false, 0.016)
+check("bodyTurn moves toward target", yaw1 > yaw0)
+check("bodyTurn does not overshoot", yaw1 <= math.rad(90) + 1e-6)
+check("bodyTurn reports a positive rate for a positive turn", rate > 0)
+check("bodyTurn is symmetric", AS.bodyTurn(0, math.rad(-90), false, 0.016) < 0)
+
+-- Wrapping: a turn across the -pi/pi seam must take the short way round.
+local wrapped, wrappedRate = AS.bodyTurn(math.rad(179), math.rad(-179), false, 0.016)
+check("bodyTurn wraps across the seam", wrapped > math.rad(179), math.deg(wrapped))
+
+-- Idle: with no speed and no turn, the pose should be near rest.
+local idleState = AS.newState()
+local idlePose = AS.computePose({
+dt = 0.016, speed = 0, turnRate = 0, grounded = true,
+weights = AS.EMPTY_WEIGHTS, anim = idleState,
+})
+check("idle pose exists", idlePose ~= nil)
+check("idle pose has all channels", idlePose.leftLeg and idlePose.rightLeg and idlePose.torso and idlePose.head)
+check("idle legs are near rest", math.abs(idlePose.leftLeg.pitch) < 2, idlePose.leftLeg.pitch)
+check("idle offset is small", idlePose.offset.Magnitude < 0.2)
+
+-- Walking: the legs must swing, and the two legs must oppose each other.
+local walkState = AS.newState()
+local maxSwing = 0
+local opposed = true
+for _ = 1, 60 do
+local pose = AS.computePose({
+dt = 0.016, speed = Config.Movement.WalkSpeed, turnRate = 0, grounded = true,
+weights = AS.EMPTY_WEIGHTS, anim = walkState,
+})
+maxSwing = math.max(maxSwing, math.abs(pose.leftLeg.pitch))
+if pose.leftLeg.pitch * pose.rightLeg.pitch > 0 then
+opposed = false
+end
+end
+check("walking swings the legs", maxSwing > 10, maxSwing)
+check("legs swing in opposition", opposed)
+
+-- Sprinting swings wider than walking.
+local function maxLegSwing(speed, weights)
+local st2 = AS.newState()
+local best = 0
+for _ = 1, 60 do
+local pose = AS.computePose({ dt = 0.016, speed = speed, turnRate = 0, grounded = true, weights = weights, anim = st2 })
+best = math.max(best, math.abs(pose.leftLeg.pitch))
+end
+return best
+end
+local sprintWeights = { crouch = 0, prone = 0, aim = 0, sprint = 1, air = 0, vault = 0, downed = 0, armed = 0 }
+check("sprint swings legs wider than walk",
+maxLegSwing(Config.Movement.SprintSpeed, sprintWeights) > maxLegSwing(Config.Movement.WalkSpeed, AS.EMPTY_WEIGHTS))
+
+-- Turn in place: yawing while standing still must move the feet.
+local turnState = AS.newState()
+local turnSwing = 0
+for _ = 1, 30 do
+local pose = AS.computePose({
+dt = 0.016, speed = 0, turnRate = 2.0, grounded = true,
+weights = AS.EMPTY_WEIGHTS, anim = turnState,
+})
+turnSwing = math.max(turnSwing, math.abs(pose.leftLeg.pitch))
+end
+check("turning in place steps the feet", turnSwing > 3, turnSwing)
+
+-- But a tiny drift should not trigger stepping.
+local driftState = AS.newState()
+local driftPose = AS.computePose({
+dt = 0.016, speed = 0, turnRate = Config.Animation.TurnDeadzone * 0.5, grounded = true,
+weights = AS.EMPTY_WEIGHTS, anim = driftState,
+})
+check("small turn drift does not step", math.abs(driftPose.leftLeg.pitch) < 2)
+
+-- Stances.
+local crouchWeights = { crouch = 1, prone = 0, aim = 0, sprint = 0, air = 0, vault = 0, downed = 0, armed = 0 }
+local crouchPose = AS.computePose({ dt = 0.016, speed = 0, turnRate = 0, grounded = true, weights = crouchWeights, anim = AS.newState() })
+check("crouch bends the legs", crouchPose.leftLeg.pitch > 10, crouchPose.leftLeg.pitch)
+check("crouch lowers the body", crouchPose.offset.Y < 0, crouchPose.offset.Y)
+
+local proneWeights = { crouch = 0, prone = 1, aim = 0, sprint = 0, air = 0, vault = 0, downed = 0, armed = 0 }
+local pronePose = AS.computePose({ dt = 0.016, speed = 0, turnRate = 0, grounded = true, weights = proneWeights, anim = AS.newState() })
+check("prone drops the body further than crouch", pronePose.offset.Y < crouchPose.offset.Y, pronePose.offset.Y)
+check("prone pitches the root", pronePose.root.pitch ~= 0, pronePose.root.pitch)
+
+-- Aiming raises both arms toward the weapon.
+local aimWeights = { crouch = 0, prone = 0, aim = 1, sprint = 0, air = 0, vault = 0, downed = 0, armed = 1 }
+local aimPose = AS.computePose({ dt = 0.016, speed = 0, turnRate = 0, grounded = true, weights = aimWeights, anim = AS.newState() })
+check("aiming raises the right arm", aimPose.rightArm.pitch > 40, aimPose.rightArm.pitch)
+check("aiming raises the left arm", aimPose.leftArm.pitch > 40, aimPose.leftArm.pitch)
+check("aiming brings the arms together", aimPose.rightArm.yaw > 0 and aimPose.leftArm.yaw < 0)
+
+-- Armed carry sits between idle and aim.
+local armedWeights = { crouch = 0, prone = 0, aim = 0, sprint = 0, air = 0, vault = 0, downed = 0, armed = 1 }
+local armedPose = AS.computePose({ dt = 0.016, speed = 0, turnRate = 0, grounded = true, weights = armedWeights, anim = AS.newState() })
+check("armed carry raises the arms off idle", armedPose.rightArm.pitch > 10, armedPose.rightArm.pitch)
+check("armed carry is lower than full aim", armedPose.rightArm.pitch < aimPose.rightArm.pitch)
+
+-- The head stabilises against torso motion.
+local moveState2 = AS.newState()
+local lastPose
+for _ = 1, 20 do
+lastPose = AS.computePose({ dt = 0.016, speed = Config.Movement.WalkSpeed, turnRate = 0, grounded = true, weights = AS.EMPTY_WEIGHTS, anim = moveState2 })
+end
+check("head counter-rotates against the torso",
+lastPose.head.yaw ~= 0 and (lastPose.head.yaw > 0) ~= (lastPose.torso.yaw > 0))
+
+-- Air pose.
+local airWeights = { crouch = 0, prone = 0, aim = 0, sprint = 0, air = 1, vault = 0, downed = 0, armed = 0 }
+local airPose = AS.computePose({ dt = 0.016, speed = 0, turnRate = 0, grounded = false, weights = airWeights, anim = AS.newState() })
+check("air pose tucks the legs", airPose.leftLeg.pitch ~= 0, airPose.leftLeg.pitch)
+
+-- blendWeights eases toward the target instead of snapping.
+local weights = { crouch = 0, prone = 0, aim = 0, sprint = 0, air = 0, vault = 0, downed = 0, armed = 0 }
+AS.blendWeights(weights, crouchWeights, 0.016, 9)
+check("blendWeights moves toward the target", weights.crouch > 0 and weights.crouch < 1, weights.crouch)
+for _ = 1, 200 do
+AS.blendWeights(weights, crouchWeights, 0.016, 9)
+end
+check("blendWeights converges", math.abs(weights.crouch - 1) < 0.01, weights.crouch)
+
+-- ---------------------------------------------------------------------
+section("R6Rig (skeleton and pose application)")
+-- ---------------------------------------------------------------------
+check("R6Rig has parts", #R6Rig.PARTS == 6)
+check("R6Rig has joints", #R6Rig.JOINTS == 6)
+
+-- The pitch sign flips for upright parts so "positive pitch" always means
+-- "lean forward".
+check("limb pitch sign is positive", R6Rig.pitchSign("limb") == 1)
+check("torso pitch sign is negative", R6Rig.pitchSign("torso") == -1)
+check("head pitch sign is negative", R6Rig.pitchSign("head") == -1)
+
+-- Every joint must reference real parts.
+local partNames = { HumanoidRootPart = true }
+for _, part in ipairs(R6Rig.PARTS) do partNames[part.name] = true end
+for _, joint in ipairs(R6Rig.JOINTS) do
+check(joint.name .. " part0 exists", partNames[joint.part0] == true, joint.part0)
+check(joint.name .. " part1 exists", partNames[joint.part1] == true, joint.part1)
+check(joint.name .. " has a channel", joint.channel ~= nil)
+end
+
+-- The canonical rig must satisfy our own isR6 check.
+local rig = R6Rig.build("TestRig")
+check("built rig is a Model", rig.ClassName == "Model")
+check("built rig passes isR6", R6Rig.isR6(rig))
+check("built rig has a Humanoid", rig:FindFirstChildOfClass("Humanoid") ~= nil)
+check("built rig has a root", rig:FindFirstChild("HumanoidRootPart") ~= nil)
+check("rig joints are Motor6D",
+rig:FindFirstChild("RootJoint", true) ~= nil and rig:FindFirstChild("RootJoint", true).ClassName == "Motor6D")
+
+-- Applying a pose must drive every joint's Transform, and resetting must
+-- clear it again.
+local testPose = {
+root = { pitch = 0, yaw = 0, roll = 0 },
+torso = { pitch = 5, yaw = 0, roll = 0 },
+head = { pitch = -2, yaw = 0, roll = 0 },
+leftArm = { pitch = 40, yaw = 0, roll = 0 },
+rightArm = { pitch = -40, yaw = 0, roll = 0 },
+leftLeg = { pitch = 30, yaw = 0, roll = 0 },
+rightLeg = { pitch = -30, yaw = 0, roll = 0 },
+offset = Vector3.new(0, -0.5, 0),
+}
+local rootMotor = rig:FindFirstChild("RootJoint", true)
+local identity = CFrame.new()
+check("joints start at rest transform", rootMotor.Transform.Position.Magnitude < 1e-6)
+
+R6Rig.applyPose(rig, testPose)
+check("applyPose drives the root transform", rootMotor.Transform ~= identity)
+-- The offset must move the joint, since that is what lowers the body.
+check("pose offset moves the root joint down", rootMotor.Transform.Position.Y < -0.1, rootMotor.Transform.Position.Y)
+
+-- Every joint with a pose channel must have been driven.
+local driven = 0
+for _, joint in ipairs(R6Rig.JOINTS) do
+local motor = rig:FindFirstChild(joint.name, true)
+if motor and motor.Transform.Position.Magnitude + math.abs(motor.Transform:ToEulerAnglesYXZ()) > 0 then
+driven += 1
+end
+end
+check("applyPose drove the joints", driven >= 5, driven)
+
+-- Resetting must clear every transform.
+R6Rig.resetPose(rig)
+local allClear = true
+for _, joint in ipairs(R6Rig.JOINTS) do
+local motor = rig:FindFirstChild(joint.name, true)
+local y, p, r = motor.Transform:ToEulerAnglesYXZ()
+if motor.Transform.Position.Magnitude > 1e-6 or math.abs(y) + math.abs(p) + math.abs(r) > 1e-6 then
+allClear = false
+end
+end
+check("resetPose clears every transform", allClear)
+
+-- Joint lookup by name is complete.
+for _, joint in ipairs(R6Rig.JOINTS) do
+check("jointByName has " .. joint.name, R6Rig.jointByName[joint.name] ~= nil)
+end
+
+-- Yaw helpers.
+local facing = CFrame.new(0, 0, 0) * CFrame.Angles(0, math.rad(90), 0)
+check("yawOf reads a 90 degree turn", math.abs(math.deg(R6Rig.yawOf(facing)) - 90) < 1, math.deg(R6Rig.yawOf(facing)))
+check("angleDelta wraps", math.abs(R6Rig.angleDelta(math.rad(179), math.rad(-179)) - math.rad(2)) < 1e-6)
+
+-- An incomplete rig must fail the check.
+local broken = Instance.new("Model")
+broken.Name = "Broken"
+local onlyTorso = Instance.new("Part")
+onlyTorso.Name = "Torso"
+onlyTorso.Parent = broken
+check("incomplete rig fails isR6", R6Rig.isR6(broken) == false)
+
+-- ---------------------------------------------------------------------
 -- Summary
 -- ---------------------------------------------------------------------
 print(string.format("\n%d passed, %d failed", passed, failed))
@@ -479,10 +808,12 @@ MODULES = [
     ("Signal", "src/client/Controllers/Signal.lua"),
 ]
 
-# WeaponModels calls require(script.Parent.Weapons) at load time, so it
-# needs a prelude that fakes `script` and lets require() accept a table.
+# These modules call require(script.Parent.X) at load time, so they need a
+# prelude that fakes `script` and lets require() accept a table.
 MODEL_MODULES = [
     ("WeaponModels", "src/shared/WeaponModels.lua"),
+    ("AnimationSystem", "src/shared/AnimationSystem.lua"),
+    ("R6Rig", "src/shared/R6Rig.lua"),
 ]
 
 
@@ -514,17 +845,19 @@ def build():
     for name, _ in MODULES:
         chunks.append(f'local {name} = __LOADED["{name}"]\n')
 
-    # WeaponModels calls require(script.Parent.Weapons). Provide a fake
-    # `script` whose Parent has a Weapons child that require() can return.
-    chunks.append('\n-- >>> fake Roblox require() for WeaponModels\n')
+    # These modules call require(script.Parent.X). Provide a fake `script`
+    # whose Parent exposes every sibling they might ask for.
+    chunks.append('\n-- >>> fake Roblox require() for model/animation modules\n')
     chunks.append(
         'do\n'
         '  local WeaponsModule = __LOADED["Weapons"]\n'
-        '  local Parent = { Weapons = WeaponsModule }\n'
+        '  local ConfigModule = __LOADED["Config"]\n'
+        '  local Parent = { Weapons = WeaponsModule, Config = ConfigModule }\n'
         '  script = { Parent = Parent }\n'
         '  __real_require = require\n'
         '  require = function(target)\n'
         '    if target == WeaponsModule then return WeaponsModule end\n'
+        '    if target == ConfigModule then return ConfigModule end\n'
         '    return __real_require(target)\n'
         '  end\n'
         'end\n'

@@ -24,14 +24,20 @@ local Modules = script.Parent:WaitForChild("Modules")
 local CombatService = require(Modules:WaitForChild("CombatService"))
 local MovementService = require(Modules:WaitForChild("MovementService"))
 local InventoryService = require(Modules:WaitForChild("InventoryService"))
+local RigService = require(Modules:WaitForChild("RigService"))
 
 -- Turn off Roblox's default movement conveniences that conflict with ours.
 StarterPlayer.EnableMouseLockOption = false
 StarterPlayer.CharacterWalkSpeed = Config.Movement.WalkSpeed
 StarterPlayer.CharacterJumpPower = Config.Movement.JumpPower
 StarterPlayer.CameraMode = Enum.CameraMode.Classic
+-- The pack animates and controls the character itself, so Roblox's
+-- auto-loaded character appearance (R15 avatars, layered clothing) is off.
+StarterPlayer.LoadCharacterAppearance = false
 
--- Start the services.
+-- Start the services. RigService goes first: it guarantees an R6 body
+-- before anything else looks at the character's parts.
+RigService.init()
 InventoryService.init()
 MovementService.init()
 CombatService.init()

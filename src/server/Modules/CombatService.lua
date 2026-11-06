@@ -143,6 +143,17 @@ function CombatService.init()
 	end)
 end
 
+--- Records which weapon a player is holding on their character, as an
+--- attribute. Attributes replicate to every client and are replayed to late
+--- joiners, so in third person everyone builds the right model in the right
+--- hand without any custom networking.
+function CombatService.broadcastEquipped(player: Player)
+	local character = player.Character
+	if character then
+		character:SetAttribute("EquippedWeapon", equipped[player])
+	end
+end
+
 function CombatService.registerPlayer(player: Player)
 	magazines[player] = {}
 	health[player] = Config.Combat.MaxHealth
@@ -164,9 +175,15 @@ function CombatService.registerPlayer(player: Player)
 	end
 	equipped[player] = loadout[1]
 
+	-- Tell every client what this player is holding. In third person the
+	-- weapon is welded to the character's arm, so every client must build
+	-- the right model in the right hand.
+	CombatService.broadcastEquipped(player)
+
 	-- Reset health/ammo every time the character respawns, so a player
 	-- who was downed and bled out comes back clean.
-	player.CharacterAdded:Connect(function()
+	player.CharacterAdded:Connect(function(character)
+		character:SetAttribute("EquippedWeapon", equipped[player])
 		task.wait(0.35)
 		CombatService.onRespawn(player)
 	end)
@@ -190,6 +207,7 @@ function CombatService.onRespawn(player: Player)
 		end
 	end
 	equipped[player] = loadout[1]
+	CombatService.broadcastEquipped(player)
 
 	CombatService.sendState(player)
 end
@@ -495,6 +513,7 @@ function CombatService.handleSwap(player: Player, weaponId: string)
 		busy[player] = false
 	end)
 	Net.toPlayer(player, "SwapResult", weaponId)
+	CombatService.broadcastEquipped(player)
 end
 
 function CombatService.handleMelee(player: Player, payload)

@@ -240,6 +240,13 @@ STARTER_PLAYER_PROPS = (
     '<token name="CameraMode">0</token>'
     '<float name="CameraMaxZoomDistance">0.5</float>'
     '<float name="CameraMinZoomDistance">0.5</float>'
+    # Force the classic R6 body. GameSettingsAvatar is the place's avatar
+    # type (Enum.GameAvatarType, where R6 = 0). This is the setting that
+    # decides which rig every player spawns with.
+    '<token name="GameSettingsAvatar">0</token>'
+    # Do not apply the player's saved avatar: we want the plain R6 rig,
+    # not layered clothing built for R15.
+    '<bool name="LoadCharacterAppearance">false</bool>'
 )
 
 

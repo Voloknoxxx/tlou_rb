@@ -10,10 +10,17 @@
 	  speed. Sprint is a burst, not a travel mode.
 	* Stamina is predicted locally and reconciled by the server so the
 	  bar feels instant but cannot be cheated.
-	* Crouch/prone lower the camera height and slow the character. Prone
-	  is the quietest stance (zero noise) and is used for stealth.
+	* Crouch and prone no longer touch the Humanoid. On R6 the Humanoid's
+	  HipHeight must stay at 0 - raising it lifts the whole character off
+	  the floor. Instead the *animator* lowers the torso, so the silhouette
+	  drops while the physics stays honest. That also means the crouch
+	  pose replicates to every client for free.
 	* Vaulting detects a ledge in front of the player and plays a short
 	  arc over it instead of the Roblox default mantle.
+
+	Every state change is mirrored onto the character as an attribute.
+	Attributes replicate automatically, so the animator on every other
+	client can pose this character without any custom networking.
 ]]
 
 local Players = game:GetService("Players")
@@ -33,20 +40,14 @@ local State = require(script.Parent.State)
 local MovementController = {}
 
 local player = Players.LocalPlayer
-local Config_Movement = Config.Movement
+local M = Config.Movement
 
 -- Input snapshot -------------------------------------------------------
 local input = {
-	forward = 0,
-	backward = 0,
-	left = 0,
-	right = 0,
 	sprintHeld = false,
 	crouchHeld = false,
-	proneToggle = false,
 	leanLeft = false,
 	leanRight = false,
-	jump = false,
 }
 
 -- Runtime --------------------------------------------------------------
@@ -74,6 +75,33 @@ local function canSprint(): boolean
 		and not State.aiming
 end
 
+--- Mirrors the current state onto the character so every client's animator
+--- can read it without extra remote traffic. Only writes on change: an
+--- attribute assignment is cheap but still replicates, and this runs every
+--- frame.
+local published: { [string]: any } = {}
+
+local function publishAttribute(character: Model, name: string, value: any)
+	if published[name] ~= value then
+		published[name] = value
+		character:SetAttribute(name, value)
+	end
+end
+
+local function publishAttributes()
+	local character = State.character
+	if not character then
+		return
+	end
+	publishAttribute(character, "Stance", State.stance)
+	publishAttribute(character, "Sprinting", State.sprinting)
+	publishAttribute(character, "Aiming", State.aiming)
+	publishAttribute(character, "Vaulting", State.vaulting)
+	-- Quantised: lean is a continuously moving float, and replicating it
+	-- every frame for a cosmetic camera shift is not worth the traffic.
+	publishAttribute(character, "Lean", math.floor(currentLean * 20 + 0.5) / 20)
+end
+
 --- Sends the authoritative-ish state to the server (throttled).
 local function syncState()
 	Net.toServer("StateUpdate", {
@@ -95,31 +123,24 @@ local function applyStanceToHumanoid()
 		return
 	end
 
-	local speed = Config_Movement.WalkSpeed
+	local speed = M.WalkSpeed
 	if State.stance == "Crouch" then
-		speed = Config_Movement.CrouchSpeed
+		speed = M.CrouchSpeed
 	elseif State.stance == "Prone" then
-		speed = Config_Movement.ProneSpeed
+		speed = M.ProneSpeed
 	elseif State.sprinting then
-		speed = Config_Movement.SprintSpeed
+		speed = M.SprintSpeed
 	end
 
 	-- Aiming slows you down to a steady walk.
 	if State.aiming and State.stance == "Stand" then
-		speed = math.min(speed, Config_Movement.WalkSpeed * 0.7)
+		speed = math.min(speed, M.WalkSpeed * 0.7)
 	end
 
 	humanoid.WalkSpeed = speed
-
-	-- Prone and crouch lower the character so the camera height follows.
-	-- We do this with a HipHeight adjustment on the Humanoid.
-	if State.stance == "Prone" then
-		humanoid.HipHeight = 0.2
-	elseif State.stance == "Crouch" then
-		humanoid.HipHeight = 1.1
-	else
-		humanoid.HipHeight = 2
-	end
+	-- R6 keeps HipHeight at 0; the animator supplies the crouch and prone
+	-- drop so the character never floats.
+	humanoid.HipHeight = 0
 end
 
 --- Tries to find a vaultable ledge directly in front of the player.
@@ -138,31 +159,31 @@ local function findVaultTarget(): (Vector3?, number)
 	params.FilterDescendantsInstances = { State.character :: any }
 	params.IgnoreWater = true
 
-	-- Probe forward at chest height.
 	local forwardHit = workspace:Raycast(origin + Vector3.new(0, 1, 0), look * 3, params)
 	if not forwardHit then
 		return nil, 0
 	end
 
-	-- From the wall, probe downward to find the top surface.
-	local downHit = workspace:Raycast(forwardHit.Position + look * 0.6 + Vector3.new(0, 6, 0), Vector3.new(0, -14, 0), params)
+	local downHit = workspace:Raycast(
+		forwardHit.Position + look * 0.6 + Vector3.new(0, 6, 0),
+		Vector3.new(0, -14, 0),
+		params
+	)
 	if not downHit then
 		return nil, 0
 	end
 
 	local height = downHit.Position.Y - origin.Y
-	if height < Config_Movement.VaultMinHeight or height > Config_Movement.VaultMaxHeight then
+	if height < M.VaultMinHeight or height > M.VaultMaxHeight then
 		return nil, 0
 	end
 
-	-- Confirm there is clearance on top (no wall above the ledge).
 	local clearance = workspace:Raycast(downHit.Position + Vector3.new(0, 3, 0), Vector3.new(0, 5, 0), params)
 	if clearance then
 		return nil, 0
 	end
 
-	local landing = downHit.Position + look * 2.2
-	return landing, height
+	return downHit.Position + look * 2.2, height
 end
 
 --- Animated vault: a short arc from the current position to the landing.
@@ -174,12 +195,13 @@ local function startVault(landing: Vector3, height: number)
 	end
 
 	State.vaulting = true
-	-- Physics state stops the Humanoid from fighting the root CFrame we
-	-- set every frame; we hand control back on landing.
+	publishAttributes()
+	-- Physics state stops the Humanoid from fighting the root CFrame we set
+	-- every frame; we hand control back on landing.
 	humanoid:ChangeState(Enum.HumanoidStateType.Physics)
 
 	local startPosition = root.Position
-	local duration = math.clamp(height / Config_Movement.VaultSpeed, 0.25, 0.6)
+	local duration = math.clamp(height / M.VaultSpeed, 0.25, 0.6)
 	local elapsed = 0
 
 	if vaultConnection then
@@ -192,6 +214,7 @@ local function startVault(landing: Vector3, height: number)
 
 		if not root.Parent then
 			vaultConnection:Disconnect()
+			vaultConnection = nil
 			State.vaulting = false
 			return
 		end
@@ -207,6 +230,7 @@ local function startVault(landing: Vector3, height: number)
 			vaultConnection:Disconnect()
 			vaultConnection = nil
 			State.vaulting = false
+			publishAttributes()
 			humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
 		end
 	end)
@@ -225,17 +249,17 @@ local function update(dt: number)
 	-- Stamina ---------------------------------------------------------
 	local draining = false
 	if State.sprinting and isMoving() then
-		State.stamina -= Config_Movement.StaminaDrainSprint * dt
+		State.stamina -= M.StaminaDrainSprint * dt
 		draining = true
 		lastDrainAt = os.clock()
-	elseif os.clock() - lastDrainAt > Config_Movement.StaminaRegenDelay then
-		State.stamina += Config_Movement.StaminaRegen * dt
+	elseif os.clock() - lastDrainAt > M.StaminaRegenDelay then
+		State.stamina += M.StaminaRegen * dt
 	end
-	State.stamina = math.clamp(State.stamina, 0, Config_Movement.MaxStamina)
+	State.stamina = math.clamp(State.stamina, 0, M.MaxStamina)
 
-	if State.stamina <= Config_Movement.ExhaustedThreshold then
+	if State.stamina <= M.ExhaustedThreshold then
 		State.exhausted = true
-	elseif State.stamina > Config_Movement.MaxStamina * 0.35 then
+	elseif State.stamina > M.MaxStamina * 0.35 then
 		State.exhausted = false
 	end
 
@@ -254,10 +278,11 @@ local function update(dt: number)
 	elseif input.leanRight and not input.leanLeft then
 		leanTarget = 1
 	end
-	currentLean += (leanTarget - currentLean) * math.min(1, Config_Movement.LeanSpeed * dt)
+	currentLean += (leanTarget - currentLean) * math.min(1, M.LeanSpeed * dt)
 	State.lean = currentLean
 
 	applyStanceToHumanoid()
+	publishAttributes()
 
 	-- Throttled server sync -------------------------------------------
 	stateSyncAccumulator += dt
@@ -347,18 +372,20 @@ function MovementController.init()
 		State.rootPart = character:WaitForChild("HumanoidRootPart", 5) :: BasePart?
 		State.head = character:WaitForChild("Head", 5) :: BasePart?
 
-		State.stamina = Config_Movement.MaxStamina
+		State.stamina = M.MaxStamina
 		State.setStance("Stand")
 		State.sprinting = false
 
 		if State.humanoid then
 			State.humanoid.UseJumpPower = true
-			State.humanoid.JumpPower = Config_Movement.JumpPower
+			State.humanoid.JumpPower = M.JumpPower
 			-- Facing is camera-driven, so auto-rotate stays off.
 			State.humanoid.AutoRotate = false
-			State.humanoid.WalkSpeed = Config_Movement.WalkSpeed
+			State.humanoid.WalkSpeed = M.WalkSpeed
+			State.humanoid.HipHeight = 0
 		end
 
+		publishAttributes()
 		State.Signals.CharacterChanged:Fire(character)
 	end
 
@@ -366,6 +393,10 @@ function MovementController.init()
 	if player.Character then
 		onCharacter(player.Character)
 	end
+
+	-- Keep the replicated attributes in step with aiming, which is toggled
+	-- by the weapon controller.
+	State.Signals.EquippedChanged:Connect(publishAttributes)
 end
 
 return MovementController
