@@ -3088,8 +3088,9 @@ local function disableDefaultAnimate(character: Model)
 	end
 	local animator = character:FindFirstChildOfClass(&quot;Animator&quot;)
 	if animator then
-		-- Our animator writes Motor6D.C0 directly. The Animator instance
-		-- would overwrite those transforms from any playing tracks.
+		-- Our animator drives Motor6D.Transform. The Animator instance would
+		-- keep any playing tracks alive and blend them into the same joints,
+		-- so stop them.
 		for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
 			track:Stop(0)
 		end
@@ -5030,7 +5031,7 @@ State.downed = false
 State.inCombat = false
 State.lastDamageAt = 0
 
--- Viewmodel
+-- The weapon model welded into the character's hand (see WeaponController).
 State.viewmodel = nil :: Model?
 State.recoil = Vector2.new(0, 0)
 State.recoilVelocity = Vector2.new(0, 0)

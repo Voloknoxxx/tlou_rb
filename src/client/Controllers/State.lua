@@ -40,7 +40,7 @@ State.downed = false
 State.inCombat = false
 State.lastDamageAt = 0
 
--- Viewmodel
+-- The weapon model welded into the character's hand (see WeaponController).
 State.viewmodel = nil :: Model?
 State.recoil = Vector2.new(0, 0)
 State.recoilVelocity = Vector2.new(0, 0)

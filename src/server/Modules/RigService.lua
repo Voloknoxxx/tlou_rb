@@ -45,8 +45,9 @@ local function disableDefaultAnimate(character: Model)
 	end
 	local animator = character:FindFirstChildOfClass("Animator")
 	if animator then
-		-- Our animator writes Motor6D.C0 directly. The Animator instance
-		-- would overwrite those transforms from any playing tracks.
+		-- Our animator drives Motor6D.Transform. The Animator instance would
+		-- keep any playing tracks alive and blend them into the same joints,
+		-- so stop them.
 		for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
 			track:Stop(0)
 		end
