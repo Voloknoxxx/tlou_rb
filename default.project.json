@@ -1,0 +1,39 @@
+{
+  "name": "TLoUMechanics",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "TLoU": {
+        "$className": "Folder",
+        "Shared": {
+          "$path": "src/shared"
+        }
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "TLoU": {
+        "$className": "Folder",
+        "Server": {
+          "$path": "src/server"
+        }
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "TLoU": {
+          "$className": "Folder",
+          "Client": {
+            "$path": "src/client"
+          }
+        }
+      }
+    }
+  }
+}
