@@ -142,9 +142,10 @@ a module is loading kills the whole script that required it. That is how
 client bootstrap: no camera, no weapons, no movement, only the map. Do not
 relax the stub to return a value for any name.
 
-After the Luau run, `run_tests.py` also runs two static guards over the
+After the Luau run, `run_tests.py` also runs three static guards over the
 whole tree, not just the inlined modules:
 
+- every `.lua` in `src/` compiles (the inlined run only covers a subset);
 - every `Enum.X.Y` in `src/` must exist in the vendored enum table;
 - `TLoUMechanics.rbxlx` must parse, keep every property inside
   `<Properties>`, and contain a `SpawnLocation`.

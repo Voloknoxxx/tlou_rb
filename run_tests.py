@@ -984,11 +984,35 @@ def check_place_structure():
     return problems
 
 
+def check_syntax():
+    """Compile every .lua file. The inlined run only covers a subset of the
+    tree, so a syntax error in an untouched controller would otherwise reach
+    Studio unnoticed."""
+    compiler = os.path.join(os.path.dirname(LUAU), "luau-compile")
+    if not os.path.exists(compiler):
+        print(f"  (skipping syntax check: {compiler} not found)")
+        return []
+    problems = []
+    for root, _dirs, files in os.walk(os.path.join(ROOT, "src")):
+        for name in sorted(files):
+            if not name.endswith(".lua"):
+                continue
+            path = os.path.join(root, name)
+            # "null" mode compiles (so syntax errors surface) without
+            # writing bytecode, which would break text decoding.
+            result = subprocess.run([compiler, "--null", path],
+                                    capture_output=True, text=True)
+            if result.returncode != 0:
+                message = (result.stderr or result.stdout).strip().splitlines()
+                problems.append(f"{name}: {message[0] if message else 'compile failed'}")
+    return problems
+
+
 def run_static_guards():
     with open(os.path.join(ROOT, "tests", "roblox_enums.json"), "r",
               encoding="utf-8") as handle:
         data = json.load(handle)
-    problems = check_enums(data) + check_place_structure()
+    problems = check_syntax() + check_enums(data) + check_place_structure()
     if problems:
         print("STATIC GUARD FAILURES:")
         for problem in problems:
