@@ -134,6 +134,39 @@ pose maths (stride, turn-in-place stepping, stances, arm carry/aim), and
 the R6 rig (joint layout, `Transform` application and reset). Add
 assertions there when adding mechanics.
 
+The `Enum` stub is **strict**: it is built from `tests/roblox_enums.json`,
+which is generated from Roblox's API dump, and raises on an unknown type
+or member. This matters because real Roblox raises too, and an error while
+a module is loading kills the whole script that required it. That is how
+`Enum.Material.Polymer` (not a real material) once took down the entire
+client bootstrap: no camera, no weapons, no movement, only the map. Do not
+relax the stub to return a value for any name.
+
+After the Luau run, `run_tests.py` also runs two static guards over the
+whole tree, not just the inlined modules:
+
+- every `Enum.X.Y` in `src/` must exist in the vendored enum table;
+- `TLoUMechanics.rbxlx` must parse, keep every property inside
+  `<Properties>`, and contain a `SpawnLocation`.
+
+The place guard exists because the generator's `service()` helper takes
+children as its third argument, so passing properties there silently
+emits them *after* `</Properties>`. Roblox tolerates it by dropping the
+property, which is invisible in Studio. Run `python3 generate_place.py`
+before `run_tests.py` so the guard sees the current place.
+
+`roblox_enums.json` is regenerated with:
+
+```
+curl -sL https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/API-Dump.json -o API-Dump.json
+python3 - <<'PY'
+import json
+d = json.load(open("API-Dump.json"))
+enums = {e["Name"]: {i["Name"]: i["Value"] for i in e["Items"]} for e in d["Enums"]}
+json.dump(enums, open("tests/roblox_enums.json", "w"), separators=(",", ":"), sort_keys=True)
+PY
+```
+
 ## Style
 
 - Luau with `--!strict` on all modules.

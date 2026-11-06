@@ -84,7 +84,7 @@ MATERIALS = {
 
 def part(name, size, pos, color, material="Concrete", anchored=True,
          cancollide=True, shape=None, transparency=None, rot=None,
-         extra=""):
+         extra="", cls="Part"):
     props = [
         f'<string name="Name">{esc(name)}</string>',
         v3("size", size[0], size[1], size[2]),
@@ -105,7 +105,7 @@ def part(name, size, pos, color, material="Concrete", anchored=True,
     if transparency is not None:
         props.append(f'<float name="Transparency">{transparency}</float>')
     props.append(extra)
-    return (f'<Item class="Part" referent="{ref()}"><Properties>'
+    return (f'<Item class="{cls}" referent="{ref()}"><Properties>'
             + "".join(props) + "</Properties></Item>")
 
 
@@ -161,6 +161,7 @@ def build_map():
     parts.append(part("SpawnLocation", (12, 1, 12), (0, 0.5, 0),
                       rgb(70, 72, 70), "Concrete",
                       transparency=0.6, cancollide=False,
+                      cls="SpawnLocation",
                       extra='<bool name="Neutral">true</bool>'))
 
     # A ruined two-room building to the north.
@@ -238,7 +239,7 @@ STARTER_PLAYER_PROPS = (
     '<float name="CharacterWalkSpeed">14</float>'
     '<float name="CharacterJumpPower">42</float>'
     '<token name="CameraMode">0</token>'
-    '<float name="CameraMaxZoomDistance">0.5</float>'
+    '<float name="CameraMaxZoomDistance">12</float>'
     '<float name="CameraMinZoomDistance">0.5</float>'
     # Force the classic R6 body. GameSettingsAvatar is the place's avatar
     # type (Enum.GameAvatarType, where R6 = 0). This is the setting that
@@ -293,12 +294,12 @@ def build():
                 folder("TLoU", folder("Client", client_children))),
         STARTER_PLAYER_PROPS,
     ))
-    xml.append(service("Players", "Players",
+    xml.append(service("Players", "Players", "",
                        '<float name="RespawnTime">4</float>'
-                       '<float name="CharacterAutoLoads">true</float>'))
-    xml.append(service("SoundService", "SoundService",
+                       '<bool name="CharacterAutoLoads">true</bool>'))
+    xml.append(service("SoundService", "SoundService", "",
                        '<bool name="RespectFilteringEnabled">true</bool>'))
-    xml.append(service("StarterGui", "StarterGui",
+    xml.append(service("StarterGui", "StarterGui", "",
                        '<bool name="ResetPlayerGuiOnSpawn">true</bool>'))
 
     xml.append("</roblox>")

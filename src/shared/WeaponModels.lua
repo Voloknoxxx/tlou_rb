@@ -31,7 +31,7 @@ local Weapons = require(script.Parent.Weapons)
 local WeaponModels = {}
 
 local DEFAULT_METAL = Enum.Material.Metal
-local DEFAULT_POLYMER = Enum.Material.Polymer
+local DEFAULT_POLYMER = Enum.Material.SmoothPlastic
 
 local function materialFor(visual): Enum.Material
 	return visual.woodFurniture and Enum.Material.Wood or DEFAULT_POLYMER

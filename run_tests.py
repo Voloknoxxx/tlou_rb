@@ -12,8 +12,11 @@ depends on without a Roblox runtime.
 Usage:  python3 run_tests.py
 """
 
+import json
 import os
+import re
 import subprocess
+import xml.etree.ElementTree as ET
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -23,11 +26,29 @@ STUBS = r'''
 -- ---------------------------------------------------------------------
 -- Roblox API stubs (shared by every inlined module)
 -- ---------------------------------------------------------------------
-Enum = setmetatable({}, { __index = function(_, key)
-	return setmetatable({}, { __index = function(_, k)
-		return { Name = k, Value = 0, EnumType = key }
-	end })
-end })
+-- Strict Enum stub. The old version invented a member for any name, which
+-- is exactly how Enum.Material.Polymer slipped through: real Roblox raises
+-- on an unknown member, and that error takes down the whole requiring
+-- script. The table below is generated from Roblox's API dump, so a bad
+-- reference now fails here instead of silently returning nil in Studio.
+Enum = (function()
+	local data = __ENUM_DATA
+	local function enumType(name)
+		local items = data[name]
+		if not items then
+			error("Enum." .. name .. " does not exist", 2)
+		end
+		return setmetatable({}, { __index = function(_, k)
+			local v = items[k]
+			if v == nil then
+				error("Enum." .. name .. "." .. k ..
+					" is not a valid member of Enum." .. name, 2)
+			end
+			return { Name = k, Value = v, EnumType = name }
+		end })
+	end
+	return setmetatable({}, { __index = function(_, key) return enumType(key) end })
+end)()
 
 Vector3 = {}
 Vector3.__index = Vector3
@@ -833,8 +854,23 @@ def inline(rel):
     )
 
 
+def enum_prelude():
+    """Vendored Roblox enum members, emitted as a Luau table literal."""
+    path = os.path.join(ROOT, "tests", "roblox_enums.json")
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    parts = ["__ENUM_DATA = {"]
+    for enum_name in sorted(data):
+        parts.append(f'  ["{enum_name}"] = {{')
+        for item in sorted(data[enum_name]):
+            parts.append(f'    ["{item}"] = {data[enum_name][item]},')
+        parts.append("  },")
+    parts.append("}")
+    return "\n".join(parts) + "\n"
+
+
 def build():
-    chunks = [STUBS, HARNESS]
+    chunks = [enum_prelude(), STUBS, HARNESS]
     chunks.append("\n__LOADED = {}\n")
 
     for name, rel in MODULES:
@@ -873,6 +909,95 @@ def build():
     return "".join(chunks)
 
 
+# ---------------------------------------------------------------------
+# Static guards
+# ---------------------------------------------------------------------
+# The inlined modules above only cover part of the tree, and the Luau stub for
+# `Enum` can only catch a bad member when the code actually runs. These two
+# checks read every file directly, so a mistake in a controller we never load
+# (or in the place generator) still fails the build.
+
+ENUM_RE = re.compile(r"Enum\.(\w+)\.(\w+)")
+
+def check_enums(data):
+    """Every Enum.X.Y in src/ must exist in Roblox's API dump."""
+    problems = []
+    for root, _dirs, files in os.walk(os.path.join(ROOT, "src")):
+        for name in sorted(files):
+            if not name.endswith(".lua"):
+                continue
+            path = os.path.join(root, name)
+            with open(path, "r", encoding="utf-8") as handle:
+                text = handle.read()
+            for enum_type, member in ENUM_RE.findall(text):
+                items = data.get(enum_type)
+                if items is None:
+                    problems.append(f"{name}: Enum.{enum_type} does not exist")
+                elif member not in items:
+                    problems.append(
+                        f"{name}: Enum.{enum_type}.{member} is not a valid member")
+    return problems
+
+
+def check_place_structure():
+    """The place must parse, keep properties inside <Properties>, and spawn.
+
+    A regex cannot see nesting here: an <Item> that contains other items ends
+    at the first child's </Item>, not its own, so the scan has to walk the real
+    tree.
+    """
+    path = os.path.join(ROOT, "TLoUMechanics.rbxlx")
+    if not os.path.exists(path):
+        return ["TLoUMechanics.rbxlx is missing; run generate_place.py"]
+
+    problems = []
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError as exc:
+        return [f"place XML does not parse: {exc}"]
+
+    def walk(node, trail):
+        for item in node.findall("Item"):
+            cls = item.get("class", "?")
+            props = item.find("Properties")
+            name = "?"
+            if props is not None:
+                name_el = props.find('string[@name="Name"]')
+                if name_el is not None:
+                    name = name_el.text or "?"
+            here = f"{trail}/{name}"
+
+            # Anything directly under <Item> must be <Properties> or a child <Item>.
+            for child in item:
+                if child.tag not in ("Properties", "Item"):
+                    problems.append(
+                        f"{here}: <{child.tag} name={child.get('name')!r}> sits "
+                        f"outside <Properties>")
+            walk(item, here)
+
+    walk(tree.getroot(), "")
+
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    if 'class="SpawnLocation"' not in text:
+        problems.append("place has no SpawnLocation instance")
+    return problems
+
+
+def run_static_guards():
+    with open(os.path.join(ROOT, "tests", "roblox_enums.json"), "r",
+              encoding="utf-8") as handle:
+        data = json.load(handle)
+    problems = check_enums(data) + check_place_structure()
+    if problems:
+        print("STATIC GUARD FAILURES:")
+        for problem in problems:
+            print("  - " + problem)
+        return 1
+    print("Static guards passed: enum references and place structure are valid.")
+    return 0
+
+
 def main():
     generated = build()
     out_path = os.path.join(ROOT, "tests", "generated_test.luau")
@@ -888,7 +1013,11 @@ def main():
     print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+    if result.returncode != 0:
+        return result.returncode
+
+    print()
+    return run_static_guards()
 
 
 if __name__ == "__main__":
