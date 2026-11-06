@@ -81,25 +81,51 @@ chmod +x /tmp/luaubin/*
    and the richer state (stance, aiming, vaulting, downed, sprinting) is
    replicated as **attributes on the character**. Add a new state by
    adding an attribute, not a remote.
-7. **R6 is enforced in three places.** The generated place sets the avatar
+7. **The animator writes poses in `RunService.PreSimulation`.** The
+   Animator rewrites every `Motor6D.Transform` between `PreAnimation` and
+   `Stepped`, and the transform batch is applied right after `Stepped`.
+   `Heartbeat` is `PostSimulation`, so a write there lands *after* the
+   batch and is discarded before it is ever used: the character stays in
+   its rest pose with no error and no warning. `PreSimulation` and
+   `Stepped` both run in the right window. `run_tests.py` enforces this.
+8. **The stock `Animate` script must be stopped on the client, not only
+   the server.** `Animate` is a `LocalScript`, so it can start on a client
+   before the server's `Destroy` replicates, and the `AnimationTrack`s it
+   leaves behind outlive it. One playing track is enough to make the
+   Animator rewrite every `Transform` each frame. `AnimatorController`
+   therefore destroys `Animate` and stops playing tracks on every client,
+   and `RigService` also watches `ChildAdded` because the script is
+   parented a moment after the character spawns.
+9. **R6 is enforced in three places.** The generated place sets the avatar
    type to R6; `RigService` converts any R15 body that slips through and
    disables the stock `Animate` script. `Config.Rig.ForceR6` is the switch.
-   The stock `Animate` script must stay disabled or it fights our animator
-   for the same Motor6Ds.
-8. **`HipHeight` stays 0 on R6.** Crouch and prone are *poses* (the
-   animator lowers the torso), not physics. Raising `HipHeight` lifts the
-   whole character off the floor.
-9. **AutoRotate is off.** The camera controller drives the character's
-   yaw. `Humanoid.AutoRotate` must stay `false` or the two fight.
-10. **Jump is rebound.** `MovementController` binds Space at high priority
+10. **`HipHeight` stays 0 on R6.** Crouch and prone are *poses* (the
+    animator lowers the torso), not physics. Raising `HipHeight` lifts the
+    whole character off the floor.
+11. **AutoRotate is off.** The camera controller drives the character's
+    yaw. `Humanoid.AutoRotate` must stay `false` or the two fight.
+12. **Regenerate the place after editing `src/`.** The place embeds a copy
+    of every script. `run_tests.py` fails with `place copy differs from
+    src/` if the two drift apart, so a fix can never be committed and
+    silently missing from the place.
+13. **Jump is rebound.** `MovementController` binds Space at high priority
    via `ContextActionService:BindActionAtPriority` so it can choose vault
    vs jump. Do not also handle Space in `UserInputService`.
-11. **Health is custom.** Server keeps its own health table and gives the
+14. **Health is custom.** Server keeps its own health table and gives the
    Humanoid a huge pool; death only happens through
    `CombatService.killPlayer`. Do not read `Humanoid.Health` for gameplay.
 
 ## Roblox gotchas hit while building this
 
+- **`Motor6D.Transform` is a per-frame scratch value, not a place to
+  store a pose.** The Animator overwrites it between `PreAnimation` and
+  `Stepped`, and the batch that applies it runs right after `Stepped`.
+  Write it in `PreSimulation` (or `Stepped`); a write in `Heartbeat` is
+  discarded before it is used, with no error.
+- **A `LocalScript` in the character can outlive the server's `Destroy`
+  of it.** `Animate` starts on the client on its own schedule, so the
+  client has to stop it too, and the `AnimationTrack`s it leaves behind
+  keep the Animator busy even after the script is gone.
 - `Humanoid.MaxHealth = math.huge` is unreliable. Use a large finite
   number (1e6).
 - Parts welded to an anchored part only follow it if they are inside

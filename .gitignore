@@ -8,6 +8,7 @@ tests/generated_test.luau
 
 # Editor / OS
 .vscode/
+__pycache__/
 .idea/
 .DS_Store
 Thumbs.db

@@ -39,19 +39,41 @@ local function disableDefaultAnimate(character: Model)
 	if not RIG.DisableDefaultAnimate then
 		return
 	end
-	local animate = character:FindFirstChild("Animate")
-	if animate then
-		animate:Destroy()
-	end
-	local animator = character:FindFirstChildOfClass("Animator")
-	if animator then
-		-- Our animator drives Motor6D.Transform. The Animator instance would
-		-- keep any playing tracks alive and blend them into the same joints,
-		-- so stop them.
-		for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-			track:Stop(0)
+
+	local function suppress()
+		local animate = character:FindFirstChild("Animate")
+		if animate then
+			animate:Destroy()
+		end
+		local animator = character:FindFirstChildOfClass("Animator")
+		if animator then
+			-- Our animator drives Motor6D.Transform. The Animator instance would
+			-- keep any playing tracks alive and blend them into the same joints,
+			-- so stop them.
+			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+				track:Stop(0)
+			end
 		end
 	end
+
+	suppress()
+
+	-- The `Animate` script is parented to the character a moment after it
+	-- spawns, so it is often absent when this first runs. Keep watching, or it
+	-- starts on every client and its tracks make the Animator rewrite every
+	-- Motor6D.Transform - which silently discards our pose. The client animator
+	-- repeats this check for the same reason.
+	local connection
+	connection = character.ChildAdded:Connect(function(child)
+		if child.Name == "Animate" or child:IsA("Animator") then
+			suppress()
+		end
+	end)
+	character.Destroying:Connect(function()
+		if connection then
+			connection:Disconnect()
+		end
+	end)
 end
 
 --- Applies R6 rules to a character that is already the right rig.

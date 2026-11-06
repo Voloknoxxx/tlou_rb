@@ -63,6 +63,28 @@ local function untrack(character: Model)
 	tracked[character] = nil
 end
 
+--- Stops Roblox's stock animation from fighting us on this client.
+---
+--- RigService destroys the character's `Animate` script on the server, but that
+--- is not enough: `Animate` is a LocalScript, so it can start on this client
+--- before the server's destroy replicates. The AnimationTracks it leaves behind
+--- outlive the script, and a single playing track makes the Animator rewrite
+--- every Motor6D.Transform each frame - which is what was silently discarding
+--- our pose. Doing it here, on the client that actually runs the script, is
+--- the reliable place.
+local function suppressDefaultAnimation(character: Model)
+	local animate = character:FindFirstChild("Animate")
+	if animate then
+		animate:Destroy()
+	end
+	local animator = character:FindFirstChildOfClass("Animator")
+	if animator then
+		for _, playing in ipairs(animator:GetPlayingAnimationTracks()) do
+			playing:Stop(0)
+		end
+	end
+end
+
 local function track(character: Model)
 	untrack(character)
 
@@ -74,6 +96,8 @@ local function track(character: Model)
 	if not humanoid or not root or not root:IsA("BasePart") then
 		return
 	end
+
+	suppressDefaultAnimation(character)
 
 	local entry: Tracked
 	entry = {
@@ -199,7 +223,14 @@ function AnimatorController.init()
 		otherPlayer.CharacterAdded:Connect(onCharacter)
 	end
 
-	RunService.Heartbeat:Connect(update)
+	-- PreSimulation, not Heartbeat. The Animator rewrites every
+	-- Motor6D.Transform between PreAnimation and Stepped, and the transform
+	-- batch is applied right after Stepped. Writing in Heartbeat (which is
+	-- PostSimulation) lands *after* the batch, so the value is thrown away
+	-- before it is ever used and the character stays in its rest pose.
+	-- PreSimulation is the phase that runs after the Animator has had its
+	-- turn and before the batch is applied.
+	RunService.PreSimulation:Connect(update)
 end
 
 --- Forces a character to be re-read, e.g. after the server swaps its rig.

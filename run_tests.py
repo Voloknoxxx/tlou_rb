@@ -1008,17 +1008,112 @@ def check_syntax():
     return problems
 
 
+def check_place_sync():
+    """Every script in the place must match its source file on disk.
+
+    The place embeds a copy of the Lua source. Editing `src/` without
+    regenerating the place leaves Studio running the old code, which is exactly
+    how a fix can be committed and still not appear in game.
+    """
+    path = os.path.join(ROOT, "TLoUMechanics.rbxlx")
+    if not os.path.exists(path):
+        return ["TLoUMechanics.rbxlx is missing; run generate_place.py"]
+
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError as exc:
+        return [f"place XML does not parse: {exc}"]
+
+    def name_of(item):
+        el = item.find('./Properties/string[@name="Name"]')
+        return el.text if el is not None and el.text else "?"
+
+    def source_of(item):
+        el = item.find('./Properties/ProtectedString[@name="Source"]')
+        if el is None:
+            el = item.find('./Properties/string[@name="Source"]')
+        return el.text if el is not None else None
+
+    embedded = {}
+    for item in tree.getroot().iter("Item"):
+        src = source_of(item)
+        if src is not None:
+            embedded[name_of(item)] = src
+
+    # Map every source file to the module name it appears as in the place.
+    on_disk = {}
+    for root, _dirs, files in os.walk(os.path.join(ROOT, "src")):
+        for name in sorted(files):
+            if not name.endswith(".lua"):
+                continue
+            key = name[:-4].replace(".server", "").replace(".client", "")
+            with open(os.path.join(root, name), "r", encoding="utf-8") as handle:
+                on_disk[key] = handle.read()
+
+    def norm(text):
+        return (text or "").replace("\r\n", "\n").strip()
+
+    problems = []
+    for key, disk_text in sorted(on_disk.items()):
+        if key not in embedded:
+            problems.append(f"{key}: not present in the place; run generate_place.py")
+        elif norm(embedded[key]) != norm(disk_text):
+            problems.append(
+                f"{key}: place copy differs from src/; run generate_place.py")
+    return problems
+
+
+def check_animation_phase():
+    """The animator must write Motor6D.Transform in a phase that survives.
+
+    The Animator rewrites every Transform between PreAnimation and Stepped, and
+    the transform batch is applied right after Stepped. A write in Heartbeat
+    (PostSimulation) therefore lands after the batch and is discarded before it
+    is used, which leaves the character in its rest pose. This guard is here
+    because that failure is invisible: no error, no warning, the animation just
+    never appears.
+    """
+    problems = []
+    path = os.path.join(ROOT, "src", "client", "Controllers", "AnimatorController.lua")
+    if not os.path.exists(path):
+        return [f"{path} is missing"]
+
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+
+    # The controller writes poses, so it must drive them from a valid phase.
+    if not re.search(r"RunService\.(PreSimulation|Stepped)\s*:\s*Connect", text):
+        problems.append(
+            "AnimatorController must connect to RunService.PreSimulation or "
+            "RunService.Stepped; writing Motor6D.Transform in Heartbeat is "
+            "overwritten by the Animator before it applies")
+    if re.search(r"RunService\.Heartbeat\s*:\s*Connect", text):
+        problems.append(
+            "AnimatorController must not connect to RunService.Heartbeat: that "
+            "is PostSimulation, which runs after the transform batch is applied")
+
+    # It must also stop the stock animation, on the client that runs it.
+    if "GetPlayingAnimationTracks" not in text:
+        problems.append(
+            "AnimatorController must stop the stock Animate tracks "
+            "(GetPlayingAnimationTracks); a playing track makes the Animator "
+            "rewrite every Motor6D.Transform each frame")
+    return problems
+
+
 def run_static_guards():
     with open(os.path.join(ROOT, "tests", "roblox_enums.json"), "r",
               encoding="utf-8") as handle:
         data = json.load(handle)
-    problems = check_syntax() + check_enums(data) + check_place_structure()
+    problems = (check_syntax() + check_enums(data) + check_place_structure()
+                + check_place_sync() + check_animation_phase())
     if problems:
         print("STATIC GUARD FAILURES:")
         for problem in problems:
             print("  - " + problem)
         return 1
-    print("Static guards passed: enum references and place structure are valid.")
+    print("Static guards passed: enum references, place structure, place/source "
+          "sync and animation phase are valid.")
     return 0
 
 
