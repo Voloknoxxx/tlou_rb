@@ -1,0 +1,21 @@
+# Rojo build output
+/build/
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Blender exports
+*.blend1
+*.fbx
+*.obj
+*.mtl
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

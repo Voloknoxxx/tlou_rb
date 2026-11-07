@@ -1,0 +1,70 @@
+{
+  "name": "LastStand",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Shared": {
+        "$path": "src/shared"
+      },
+      "Assets": {
+        "$className": "Folder"
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "Server": {
+        "$path": "src/server"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "Client": {
+          "$path": "src/client"
+        }
+      },
+      "$properties": {
+        "CharacterWalkSpeed": 12,
+        "EnableMouseLockOption": false
+      }
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "StreamingEnabled": false,
+        "FilteringEnabled": true
+      }
+    },
+
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0.05, 0.05, 0.06],
+        "OutdoorAmbient": [0.16, 0.16, 0.18],
+        "Brightness": 1.6,
+        "ClockTime": 18.5,
+        "GeographicLatitude": 41,
+        "GlobalShadows": true,
+        "FogColor": [0.14, 0.15, 0.16],
+        "FogStart": 40,
+        "FogEnd": 320,
+        "EnvironmentDiffuseScale": 0.4,
+        "EnvironmentSpecularScale": 0.4
+      }
+    },
+
+    "SoundService": {
+      "$className": "SoundService",
+      "$properties": {
+        "RespectFilteringEnabled": true,
+        "AmbientReverb": "Outdoor"
+      }
+    }
+  }
+}
