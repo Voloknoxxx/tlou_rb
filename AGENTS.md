@@ -99,24 +99,44 @@ chmod +x /tmp/luaubin/*
 9. **R6 is enforced in three places.** The generated place sets the avatar
    type to R6; `RigService` converts any R15 body that slips through and
    disables the stock `Animate` script. `Config.Rig.ForceR6` is the switch.
-10. **`HipHeight` stays 0 on R6.** Crouch and prone are *poses* (the
+10. **Joints may be `Motor6D` *or* `AnimationConstraint`.** The Avatar
+    Joint Upgrade replaces a spawned character's Motor6Ds with
+    AnimationConstraints, and it is opt-out as of the Phase 2 rollout, so a
+    place that says nothing gets the new joints. `IsA("Motor6D")` does not
+    match them (Roblox: "Scripts checking for instance:IsA("Motor6D") will
+    not detect the new AnimationConstraints"), so a lookup written the old
+    way returns nothing and posing silently no-ops - the character stays in
+    its rest pose while every other mechanic works. Always go through
+    `R6Rig.isJoint`/`collectJoints`, never a bare `IsA("Motor6D")`. Both
+    classes expose the same `Transform`, so one write path covers both, and
+    `R6Rig.prepareJoint` sets `IsKinematic` on a constraint so physics cannot
+    pull it off its pose. The place also opts out of the upgrade
+    (`StarterPlayer.AvatarJointUpgrade = Disabled`), and `run_tests.py`
+    fails if that property goes missing.
+11. **`HipHeight` stays 0 on R6.** Crouch and prone are *poses* (the
     animator lowers the torso), not physics. Raising `HipHeight` lifts the
     whole character off the floor.
-11. **AutoRotate is off.** The camera controller drives the character's
+12. **AutoRotate is off.** The camera controller drives the character's
     yaw. `Humanoid.AutoRotate` must stay `false` or the two fight.
-12. **Regenerate the place after editing `src/`.** The place embeds a copy
+13. **Regenerate the place after editing `src/`.** The place embeds a copy
     of every script. `run_tests.py` fails with `place copy differs from
     src/` if the two drift apart, so a fix can never be committed and
     silently missing from the place.
-13. **Jump is rebound.** `MovementController` binds Space at high priority
+14. **Jump is rebound.** `MovementController` binds Space at high priority
    via `ContextActionService:BindActionAtPriority` so it can choose vault
    vs jump. Do not also handle Space in `UserInputService`.
-14. **Health is custom.** Server keeps its own health table and gives the
+15. **Health is custom.** Server keeps its own health table and gives the
    Humanoid a huge pool; death only happens through
    `CombatService.killPlayer`. Do not read `Humanoid.Health` for gameplay.
 
 ## Roblox gotchas hit while building this
 
+- **A rig lookup keyed on `IsA("Motor6D")` silently stops working when the
+  Avatar Joint Upgrade is on.** The engine swaps the character's Motor6Ds
+  for `AnimationConstraint`s, which `IsA("Motor6D")` does not match, so the
+  lookup returns nothing and the pose is never applied. There is no error -
+  the character just sits in its rest pose. This was the real cause of "the
+  mechanics work but there are no animations".
 - **`Motor6D.Transform` is a per-frame scratch value, not a place to
   store a pose.** The Animator overwrites it between `PreAnimation` and
   `Stepped`, and the batch that applies it runs right after `Stepped`.

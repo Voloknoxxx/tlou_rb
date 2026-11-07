@@ -248,6 +248,15 @@ STARTER_PLAYER_PROPS = (
     # Do not apply the player's saved avatar: we want the plain R6 rig,
     # not layered clothing built for R15.
     '<bool name="LoadCharacterAppearance">false</bool>'
+    # Turn off the Avatar Joint Upgrade (Enum.RolloutState, Disabled = 1).
+    #
+    # With this at Default, the engine replaces every Motor6D in a spawned
+    # character with an AnimationConstraint plus a BallSocketConstraint. That
+    # is opt-out as of the Phase 2 rollout, so a place that says nothing gets
+    # the new joints - and any script that looks for Motor6D stops finding
+    # them. Our animator handles both classes, but the pack also relies on the
+    # classic rigid R6 feel, so we opt out here and keep the old behaviour.
+    '<token name="AvatarJointUpgrade">1</token>'
 )
 
 

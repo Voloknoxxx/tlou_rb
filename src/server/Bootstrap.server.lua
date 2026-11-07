@@ -34,6 +34,12 @@ StarterPlayer.CameraMode = Enum.CameraMode.Classic
 -- The pack animates and controls the character itself, so Roblox's
 -- auto-loaded character appearance (R15 avatars, layered clothing) is off.
 StarterPlayer.LoadCharacterAppearance = false
+-- Keep the classic rigid joints. The Avatar Joint Upgrade swaps a spawned
+-- character's Motor6Ds for AnimationConstraints; the animator understands
+-- both, but the R6 feel this pack is built around is the rigid one.
+pcall(function()
+	StarterPlayer.AvatarJointUpgrade = Enum.RolloutState.Disabled
+end)
 
 -- Start the services. RigService goes first: it guarantees an R6 body
 -- before anything else looks at the character's parts.

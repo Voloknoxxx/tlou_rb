@@ -127,6 +127,12 @@ for _, joint in ipairs(R6Rig.JOINTS) do
 	R6Rig.jointByName[joint.name] = joint
 end
 
+--- Just the joint names, for diagnostics.
+R6Rig.JOINT_NAMES = {}
+for _, joint in ipairs(R6Rig.JOINTS) do
+	table.insert(R6Rig.JOINT_NAMES, joint.name)
+end
+
 --- The pitch sign for a joint kind: limbs swing forward on positive pitch,
 --- the upright parts (torso, head) lean forward on negative, so we flip
 --- them here and the rest of the pack never has to think about it.
@@ -141,6 +147,37 @@ function R6Rig.rotationFor(kind: string, pitch: number, yaw: number, roll: numbe
 		(yaw or 0) * RAD,
 		(roll or 0) * RAD
 	)
+end
+
+--- The joint classes a character can be rigged with.
+---
+--- A character used to be built from Motor6Ds and nothing else. The Avatar
+--- Joint Upgrade now replaces those Motor6Ds with AnimationConstraints in
+--- spawned characters, and `IsA("Motor6D")` does not match the replacement
+--- (Roblox: "Scripts checking for instance:IsA("Motor6D") will not detect the
+--- new AnimationConstraints"). Both classes expose the same `Transform` CFrame
+--- that this module drives, so we accept either and stay rig-agnostic.
+R6Rig.JOINT_CLASSES = {
+	Motor6D = true,
+	AnimationConstraint = true,
+}
+
+--- True when an instance is a joint we can drive.
+function R6Rig.isJoint(instance: Instance?): boolean
+	return instance ~= nil and R6Rig.JOINT_CLASSES[instance.ClassName] == true
+end
+
+--- Makes a joint behave rigidly, the way a Motor6D does.
+---
+--- An AnimationConstraint follows its Transform physically unless IsKinematic
+--- is set, and with the default force limits a heavy pose can be missed
+--- entirely. Setting it pins the joint to the transform we write, which is the
+--- behaviour the rest of this module assumes. Motor6Ds are already rigid, so
+--- this is a no-op for them.
+function R6Rig.prepareJoint(instance: Instance)
+	if instance.ClassName == "AnimationConstraint" then
+		instance.IsKinematic = true
+	end
 end
 
 --- True when an instance looks like a complete R6 character.
@@ -159,19 +196,19 @@ function R6Rig.isR6(character: Instance): boolean
 	-- whole model so both layouts are accepted.
 	for _, joint in ipairs(R6Rig.JOINTS) do
 		local child = character:FindFirstChild(joint.name, true)
-		if not child or not child:IsA("Motor6D") then
+		if not R6Rig.isJoint(child) then
 			return false
 		end
 	end
 	return true
 end
 
---- Every R6 Motor6D joint on a character, by name.
-function R6Rig.collectJoints(character: Instance): { [string]: Motor6D }
+--- Every R6 joint on a character, by name, whatever class it happens to be.
+function R6Rig.collectJoints(character: Instance): { [string]: Instance }
 	local found = {}
 	for _, joint in ipairs(R6Rig.JOINTS) do
 		local child = character:FindFirstChild(joint.name, true)
-		if child and child:IsA("Motor6D") then
+		if R6Rig.isJoint(child) then
 			found[joint.name] = child
 		end
 	end
@@ -181,49 +218,56 @@ end
 --- Applies a pose to a character's rig.
 --- `pose` is the table AnimationSystem.computePose returns.
 ---
---- We write Motor6D.Transform rather than C0. Transform is an extra
---- transform composed on top of C0/C1, and it is what it exists for:
+--- We write the joint's `Transform` rather than C0. Transform is an extra
+--- transform composed on top of the joint's rest pose, and it is what it
+--- exists for:
 --- * it is not replicated, so every client can pose every character
 ---   independently without the server seeing a stream of joint writes;
---- * it leaves C0/C1 as the rig's rest pose, so the character returns to
----   rest the moment we stop, with nothing to restore;
+--- * it leaves C0/C1 (or the rig attachments) as the rest pose, so the
+---   character returns to rest the moment we stop, with nothing to restore;
 --- * it does not move the parts physically, so it cannot fight the
 ---   Humanoid's own physics or make the character fall over.
+---
+--- Roblox's own migration guidance for the Avatar Joint Upgrade says to
+--- multiply `AnimationConstraint.Transform` during PreSimulation, which is
+--- exactly what this does - see AnimatorController for the phase.
 function R6Rig.applyPose(character: Instance, pose)
-local joints = R6Rig.collectJoints(character)
-for _, joint in ipairs(R6Rig.JOINTS) do
-local motor = joints[joint.name]
-if motor then
-local channel = pose[joint.channel]
-if channel then
-motor.Transform = R6Rig.rotationFor(joint.kind, channel.pitch, channel.yaw, channel.roll)
-end
-end
-end
+	local joints = R6Rig.collectJoints(character)
+	for _, joint in ipairs(R6Rig.JOINTS) do
+		local motor = joints[joint.name]
+		if motor then
+			local channel = pose[joint.channel]
+			if channel then
+				R6Rig.prepareJoint(motor)
+				motor.Transform = R6Rig.rotationFor(joint.kind, channel.pitch, channel.yaw, channel.roll)
+			end
+		end
+	end
 
--- The root joint carries the torso twist as well as the vertical offset
--- (bob, crouch and prone drop). Applying the offset here keeps the drop
--- in the joint rather than moving the character, so the physics stays
--- honest and the silhouette still lowers.
-local rootMotor = joints.RootJoint
-if rootMotor and pose.root and pose.torso then
-local joint = R6Rig.jointByName.RootJoint
-local rotation = R6Rig.rotationFor(
-joint.kind,
-(pose.root.pitch or 0) + (pose.torso.pitch or 0),
-(pose.root.yaw or 0) + (pose.torso.yaw or 0),
-(pose.root.roll or 0) + (pose.torso.roll or 0)
-)
-local offset = pose.offset or Vector3.new(0, 0, 0)
-rootMotor.Transform = CFrame.new(offset) * rotation
-end
+	-- The root joint carries the torso twist as well as the vertical offset
+	-- (bob, crouch and prone drop). Applying the offset here keeps the drop
+	-- in the joint rather than moving the character, so the physics stays
+	-- honest and the silhouette still lowers.
+	local rootMotor = joints.RootJoint
+	if rootMotor and pose.root and pose.torso then
+		local joint = R6Rig.jointByName.RootJoint
+		local rotation = R6Rig.rotationFor(
+			joint.kind,
+			(pose.root.pitch or 0) + (pose.torso.pitch or 0),
+			(pose.root.yaw or 0) + (pose.torso.yaw or 0),
+			(pose.root.roll or 0) + (pose.torso.roll or 0)
+		)
+		local offset = pose.offset or Vector3.new(0, 0, 0)
+		R6Rig.prepareJoint(rootMotor)
+		rootMotor.Transform = CFrame.new(offset) * rotation
+	end
 end
 
 --- Returns every joint to its rest pose by clearing the transform.
 function R6Rig.resetPose(character: Instance)
-for _, motor in pairs(R6Rig.collectJoints(character)) do
-motor.Transform = CFrame.new()
-end
+	for _, motor in pairs(R6Rig.collectJoints(character)) do
+		motor.Transform = CFrame.new()
+	end
 end
 
 --- Builds a canonical R6 character. Used to replace an R15 body, and by the

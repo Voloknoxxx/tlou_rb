@@ -99,6 +99,18 @@ local function track(character: Model)
 
 	suppressDefaultAnimation(character)
 
+	-- A rig whose joints we cannot find is the one failure mode that produces
+	-- no error at all: every other mechanic works and the character simply
+	-- never leaves its rest pose. Say so once, loudly, instead of failing
+	-- silently - that is what made this bug take so long to find.
+	local joints = R6Rig.collectJoints(character)
+	if next(joints) == nil then
+		warn(string.format(
+			"[TLoU] %s has no drivable joints (looked for %s); its animations will not play. " ..
+			"If the Avatar Joint Upgrade is on, its AnimationConstraints should have matched.",
+			character.Name, table.concat(R6Rig.JOINT_NAMES or {}, ", ")))
+	end
+
 	local entry: Tracked
 	entry = {
 		character = character,

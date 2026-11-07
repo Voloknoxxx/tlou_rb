@@ -227,10 +227,15 @@ local function makeInstance(class)
 		end
 		return out
 	end
-	-- Motor6D carries an extra Transform that defaults to identity; our
-	-- animator writes it every frame.
-	if class == "Motor6D" then
+	-- Joints carry an extra Transform that defaults to identity; our
+	-- animator writes it every frame. AnimationConstraint is what the
+	-- Avatar Joint Upgrade replaces Motor6D with, and it exposes the same
+	-- Transform plus an IsKinematic switch.
+	if class == "Motor6D" or class == "AnimationConstraint" then
 		inst.Transform = CFrame.new()
+	end
+	if class == "AnimationConstraint" then
+		inst.IsKinematic = false
 	end
 	function inst:SetAttribute(key, value) self._attributes[key] = value end
 	function inst:GetAttribute(key) return self._attributes[key] end
@@ -243,7 +248,17 @@ local function makeInstance(class)
 		return false
 	end
 	function inst:Destroy()
-		self.Parent = nil
+		-- Remove ourselves from the parent's child list explicitly. Assigning
+		-- Parent would not do it: the __newindex hook only fires for keys the
+		-- table does not already hold, and Parent is set by this point, so the
+		-- child would linger and FindFirstChild would keep returning it.
+		local parent = rawget(self, "Parent")
+		if parent and parent._children then
+			for i, child in ipairs(parent._children) do
+				if child == self then table.remove(parent._children, i) break end
+			end
+		end
+		rawset(self, "Parent", nil)
 	end
 	-- Parent assignment tracked via metatable so we can maintain children.
 	return setmetatable(inst, {
@@ -790,6 +805,52 @@ end
 end
 check("resetPose clears every transform", allClear)
 
+-- The Avatar Joint Upgrade replaces a spawned character's Motor6Ds with
+-- AnimationConstraints, and IsA("Motor6D") does not match those. A rig built
+-- that way must animate exactly like a Motor6D one, or every player silently
+-- stays in their rest pose.
+local ajRig = R6Rig.build("AJRig")
+for _, joint in ipairs(R6Rig.JOINTS) do
+local motor = ajRig:FindFirstChild(joint.name, true)
+local constraint = makeInstance("AnimationConstraint")
+constraint.Name = joint.name
+constraint.Parent = motor.Parent
+motor:Destroy()
+end
+check("AJ rig still passes isR6", R6Rig.isR6(ajRig))
+local ajJoints = R6Rig.collectJoints(ajRig)
+check("collectJoints finds AnimationConstraints", ajJoints.RootJoint ~= nil and ajJoints.Neck ~= nil)
+
+R6Rig.applyPose(ajRig, testPose)
+local ajDriven = 0
+for _, joint in ipairs(R6Rig.JOINTS) do
+local motor = ajRig:FindFirstChild(joint.name, true)
+if motor and motor.Transform.Position.Magnitude + math.abs(motor.Transform:ToEulerAnglesYXZ()) > 0 then
+ajDriven += 1
+end
+end
+check("applyPose drives AnimationConstraint joints", ajDriven >= 5, ajDriven)
+-- A constraint that is not kinematic follows its transform physically and can
+-- miss the pose entirely, so applying one must pin it.
+local ajRoot = ajRig:FindFirstChild("RootJoint", true)
+check("applyPose pins the constraint kinematic", ajRoot.IsKinematic == true)
+check("AnimationConstraint pose offset applied", ajRoot.Transform.Position.Y < -0.1, ajRoot.Transform.Position.Y)
+
+-- The silent failure mode: a rig whose joints we cannot recognise. Nothing
+-- errors, the pose is simply never applied, so the animator warns on it. The
+-- lookup must report "nothing found" for such a rig rather than pretend.
+local bareRig = R6Rig.build("BareRig")
+for _, joint in ipairs(R6Rig.JOINTS) do
+bareRig:FindFirstChild(joint.name, true):Destroy()
+end
+check("collectJoints is empty on a jointless rig", next(R6Rig.collectJoints(bareRig)) == nil)
+check("isR6 rejects a jointless rig", R6Rig.isR6(bareRig) == false)
+check("JOINT_NAMES lists every joint", #R6Rig.JOINT_NAMES == #R6Rig.JOINTS)
+check("isJoint rejects a plain Part", R6Rig.isJoint(makeInstance("Part")) == false)
+check("isJoint accepts Motor6D", R6Rig.isJoint(makeInstance("Motor6D")) == true)
+check("isJoint accepts AnimationConstraint", R6Rig.isJoint(makeInstance("AnimationConstraint")) == true)
+
+
 -- Joint lookup by name is complete.
 for _, joint in ipairs(R6Rig.JOINTS) do
 check("jointByName has " .. joint.name, R6Rig.jointByName[joint.name] ~= nil)
@@ -981,6 +1042,14 @@ def check_place_structure():
         text = handle.read()
     if 'class="SpawnLocation"' not in text:
         problems.append("place has no SpawnLocation instance")
+    # The Avatar Joint Upgrade replaces a character's Motor6Ds with
+    # AnimationConstraints. The pack animates either, but its R6 feel assumes
+    # the rigid joints, so the place must opt out explicitly - leaving the
+    # property at its Default would silently change the rig on spawn.
+    if '<token name="AvatarJointUpgrade">1</token>' not in text:
+        problems.append(
+            "place does not set StarterPlayer.AvatarJointUpgrade to Disabled; "
+            "run generate_place.py")
     return problems
 
 
